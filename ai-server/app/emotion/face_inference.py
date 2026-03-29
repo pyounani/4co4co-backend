@@ -140,76 +140,73 @@ class FaceEmotionAnalyzer:
     def _load_models(self):
         if self.models_loaded:
             return
-        print("EMOTIC 모델들을 로딩 중...")
+        print("전처리 모델들을 CPU 메모리에 로딩 중 (VRAM 점유 0MB 유지)...")
 
-        #  YOLOv3 (Darknet) 로딩
-        self.yolo = prepare_yolo_v3(self.yolo_model_path).to(self.device).eval()
-        print(f"[YOLO] Darknet YOLOv3 loaded")
+        self.yolo = prepare_yolo_v3(self.yolo_model_path).to('cpu').eval()
 
-        # Thresholds
-        threshold_path = os.path.join(self.result_path, 'val_thresholds.npy')
-        if os.path.exists(threshold_path):
-            self.thresholds = torch.FloatTensor(np.load(threshold_path)).to(self.device)
-        else:
-            print(f"Warning: {threshold_path} not found. Using default thresholds.")
-            self.thresholds = torch.FloatTensor([0.5] * len(self.emotions)).to(self.device)
-
-        #  EMOTIC 가중치 (CPU→GPU, 더미 대체 없음)
-        ctx_p  = os.path.join(self.emotic_model_path, 'model_context1.pth')
+        ctx_p = os.path.join(self.emotic_model_path, 'model_context1.pth')
         body_p = os.path.join(self.emotic_model_path, 'model_body1.pth')
         head_p = os.path.join(self.emotic_model_path, 'model_emotic1.pth')
 
-        try:
-            model_context = torch.load(ctx_p,  map_location='cpu', weights_only=False)
-            model_body    = torch.load(body_p, map_location='cpu', weights_only=False)
-            emotic_head   = torch.load(head_p, map_location='cpu', weights_only=False)
-        except Exception as e:
-            print(f" EMOTIC 로딩 실패: {e}")
-            raise
+        model_context = torch.load(ctx_p, map_location='cpu')
+        model_body = torch.load(body_p, map_location='cpu')
+        emotic_head = torch.load(head_p, map_location='cpu')
 
         for m in (model_context, model_body, emotic_head):
-            if hasattr(m, 'eval'):
-                m.eval()
+            if hasattr(m, 'eval'): m.eval()
 
-        self.models = [
-            model_context.to(self.device),
-            model_body.to(self.device),
-            emotic_head.to(self.device),
-        ]
+        self.models = [model_context, model_body, emotic_head]
         self.models_loaded = True
-        print(" EMOTIC 모델 로드 완료")
+        print("전처리 모델 로드 완료 (CPU 대기 모드)")
 
     def get_bbox(self, image_context: np.ndarray, yolo_image_size: int = 416,
                  conf_thresh: float = 0.8, nms_thresh: float = 0.4) -> np.ndarray:
         """YOLOv3로 사람 박스 검출"""
-        test_transform = transforms.Compose([
-            transforms.ToPILImage(),
-            transforms.ToTensor()
-        ])
-        image_yolo = test_transform(cv2.resize(image_context, (yolo_image_size, yolo_image_size))).unsqueeze(0).to(self.device)
+        import gc
+        try:
+            self.yolo.to(self.device)
 
-        with torch.no_grad():
-            detections = self.yolo(image_yolo)
-            nms_det = non_max_suppression_v3(detections, conf_thresh, nms_thresh)[0]
-            if nms_det is None or len(nms_det) == 0:
-                return np.empty((0, 4), dtype=int)
-            det = rescale_boxes_v3(nms_det, yolo_image_size, (image_context.shape[:2]))
+            test_transform = transforms.Compose([
+                transforms.ToPILImage(),
+                transforms.ToTensor()
+            ])
+            image_yolo = test_transform(cv2.resize(image_context, (yolo_image_size, yolo_image_size))).unsqueeze(0).to(self.device)
 
-        if torch.is_tensor(det):
-            det = det.detach().cpu().numpy()
+            with torch.no_grad():
+                detections = self.yolo(image_yolo)
+                nms_det = non_max_suppression_v3(detections, conf_thresh, nms_thresh)[0]
+                if nms_det is None or len(nms_det) == 0:
+                    return np.empty((0, 4), dtype=int)
+                det = rescale_boxes_v3(nms_det, yolo_image_size, (image_context.shape[:2]))
 
-        bboxes = []
-        for row in det:
-            x1, y1, x2, y2, _, _, cls_pred = row.tolist()
-            if int(cls_pred) == 0:  # person class
-                x1 = int(min(image_context.shape[1], max(0,   x1)))
-                x2 = int(min(image_context.shape[1], max(x1,  x2)))
-                y1 = int(min(image_context.shape[0], max(0,   y1)))
-                y2 = int(min(image_context.shape[0], max(y1,  y2)))
-                bboxes.append([x1, y1, x2, y2])
-        return np.asarray(bboxes, dtype=int)
+            if torch.is_tensor(det):
+                det = det.detach().cpu().numpy()
+
+            bboxes = []
+            for row in det:
+                x1, y1, x2, y2, _, _, cls_pred = row.tolist()
+                if int(cls_pred) == 0:  # person class
+                    x1 = int(min(image_context.shape[1], max(0,   x1)))
+                    x2 = int(min(image_context.shape[1], max(x1,  x2)))
+                    y1 = int(min(image_context.shape[0], max(0,   y1)))
+                    y2 = int(min(image_context.shape[0], max(y1,  y2)))
+                    bboxes.append([x1, y1, x2, y2])
+            return np.asarray(bboxes, dtype=int)
+
+        finally:
+            self.yolo.to('cpu')
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            print("[YOLO] VRAM 반환 완료")
 
     def analyze_emotions(self, image_path: str, person_detections: Optional[List[Dict]] = None) -> Dict:
+        import gc
+        import os
+        import cv2
+        import numpy as np
+        import torch
+
         if not os.path.exists(image_path):
             return {"error": f"Image file {image_path} does not exist"}
 
@@ -236,12 +233,12 @@ class FaceEmotionAnalyzer:
             for detection in person_detections:
                 if 'bbox' in detection and len(detection['bbox']) == 4:
                     bbox_yolo.append(detection['bbox'])
-            bbox_yolo = np.asarray(bbox_yolo, dtype=int) if bbox_yolo else np.empty((0,4), dtype=int)
+            bbox_yolo = np.asarray(bbox_yolo, dtype=int) if bbox_yolo else np.empty((0, 4), dtype=int)
             person_count = len(bbox_yolo)
 
         if person_count == 0:
             return {
-                "method": "emotic_face_emotion",
+                "method": "emotic_face_emotion_dynamic",
                 "person_count": 0,
                 "emotion_percentages": {emotion: 0.0 for emotion in self.emotions},
                 "top_emotions": [],
@@ -252,56 +249,72 @@ class FaceEmotionAnalyzer:
         all_emotion_scores, all_vad_scores = [], []
         successful_analyses = 0
 
-        for bbox_idx, pred_bbox in enumerate(bbox_yolo):
-            try:
-                pred_bbox = np.asarray(pred_bbox, dtype=int)  
-                result = infer(self.context_norm, self.body_norm, self.ind2cat, self.ind2vad,
-                               self.device, self.thresholds, self.models,
-                               image_context=image_context, bbox=pred_bbox, to_print=False)
-                if len(result) >= 4:
-                    pred_cat, pred_cont, emotion_dict, sorted_emotions = result
-                    all_emotion_scores.append(emotion_dict)
-                    all_vad_scores.append(pred_cont)
-                    successful_analyses += 1
-                    print(f"Person {bbox_idx + 1}: VAD=({pred_cont[0]:.2f},{pred_cont[1]:.2f},{pred_cont[2]:.2f})",
-                          f"Top3={[f'{e}:{s*100:.1f}%' for e,s in sorted_emotions[:3]]}")
-            except Exception as e:
-                print(f"Error analyzing person {bbox_idx + 1}: {str(e)}")
-                # 실패 시 완전 fallback 대신 스킵(원하면 균등분포 넣어도 됨)
-                continue
+        try:
+            if self.device.type == 'cuda':
+                for m in self.models:
+                    m.to(self.device)
 
-        if successful_analyses == 0:
+            for bbox_idx, pred_bbox in enumerate(bbox_yolo):
+                try:
+                    pred_bbox = np.asarray(pred_bbox, dtype=int)
+                    result = infer(self.context_norm, self.body_norm, self.ind2cat, self.ind2vad,
+                                   self.device, self.thresholds, self.models,
+                                   image_context=image_context, bbox=pred_bbox, to_print=False)
+
+                    if len(result) >= 4:
+                        pred_cat, pred_cont, emotion_dict, sorted_emotions = result
+                        all_emotion_scores.append(emotion_dict)
+                        all_vad_scores.append(pred_cont)
+                        successful_analyses += 1
+                        print(f"[EMOTIC] Person {bbox_idx + 1} 분석 완료")
+                except Exception as e:
+                    print(f"Error analyzing person {bbox_idx + 1}: {str(e)}")
+                    continue
+
+            if successful_analyses == 0:
+                return {
+                    "method": "emotic_face_emotion_dynamic",
+                    "person_count": person_count,
+                    "message": "Face analysis failed for all persons"
+                }
+
+            averaged_emotions = {}
+            for emotion in self.emotions:
+                scores = [emotion_scores.get(emotion, 0.0) for emotion_scores in all_emotion_scores]
+                averaged_emotions[emotion] = sum(scores) / len(scores) * 100.0
+
+            avg_vad = np.mean(all_vad_scores, axis=0) if all_vad_scores else [0.0, 0.0, 0.0]
+
+            sorted_emotions_final = sorted(averaged_emotions.items(), key=lambda x: x[1], reverse=True)
+            predicted_emotions = [emotion for emotion, score in sorted_emotions_final if score > 5.0]
+
             return {
-                "method": "emotic_face_emotion",
+                "method": "emotic_face_emotion_dynamic",
                 "person_count": person_count,
-                "emotion_percentages": {emotion: 0.0 for emotion in self.emotions},
-                "top_emotions": [],
-                "predicted_emotions": [],
-                "message": "Face analysis failed for all persons"
+                "successful_analyses": successful_analyses,
+                "emotion_percentages": {e: round(p, 3) for e, p in averaged_emotions.items()},
+                "top_emotions": [(e, round(p, 3)) for e, p in sorted_emotions_final[:5]],
+                "predicted_emotions": predicted_emotions,
+                "vad_dimensions": {
+                    "valence": float(avg_vad[0]),
+                    "arousal": float(avg_vad[1]),
+                    "dominance": float(avg_vad[2])
+                }
             }
 
-        averaged_emotions = {}
-        for emotion in self.emotions:
-            scores = [emotion_scores.get(emotion, 0.0) for emotion_scores in all_emotion_scores]
-            averaged_emotions[emotion] = sum(scores) / len(scores) * 100.0
+        except Exception as pipeline_error:
+            print(f"추론 파이프라인 에러: {pipeline_error}")
+            return {"error": str(pipeline_error)}
 
-        avg_vad = np.mean(all_vad_scores, axis=0) if all_vad_scores else [0.0, 0.0, 0.0]
-        sorted_emotions = sorted(averaged_emotions.items(), key=lambda x: x[1], reverse=True)
-        predicted_emotions = [emotion for emotion, score in sorted_emotions if score > 5.0]
+        finally:
+            if self.models_loaded:
+                for m in self.models:
+                    m.to('cpu')
 
-        return {
-            "method": "emotic_face_emotion",
-            "person_count": person_count,
-            "successful_analyses": successful_analyses,
-            "emotion_percentages": {e: round(p, 3) for e, p in averaged_emotions.items()},
-            "top_emotions": [(e, round(p, 3)) for e, p in sorted_emotions[:5]],
-            "predicted_emotions": predicted_emotions,
-            "vad_dimensions": {
-                "valence": float(avg_vad[0]),
-                "arousal": float(avg_vad[1]),
-                "dominance": float(avg_vad[2])
-            }
-        }
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            print("[EMOTIC] VRAM Purge 완료. 상시 적재 모델(MusicGen) 가용 공간 확보.")
 
     def analyze_single_image(self, image_path: str, conf_thresh: float = 0.8,
                              nms_thresh: float = 0.4, save_result: bool = False) -> Dict:

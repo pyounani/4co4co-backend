@@ -68,94 +68,35 @@ def model_load(
     face_model_dir: str = "emotic",
     verbose: bool = True
 ) -> bool:
-    if verbose:
-        print("감정분석 모델들을 로드하는 중...")
-    
-    success_count = 0
-    total_count = 5
-    
-    # YOLO 모델 로드
-    if YOLO_AVAILABLE:
-        try:
+
+    if verbose: print("시스템 초기화 중 (VRAM 최적화 모드)...")
+
+    _load_musicgen_model(verbose)
+
+    try:
+        if YOLO_AVAILABLE:
             _MODELS['yolo'] = YOLO(yolo_model_path)
-            if verbose:
-                print(f"YOLO 모델 로드 완료: {yolo_model_path}")
-            success_count += 1
-        except Exception as e:
-            if verbose:
-                print(f"YOLO 모델 로드 실패: {e}")
-            _MODELS['yolo'] = None
-    else:
-        if verbose:
-            print("YOLO를 사용할 수 없습니다 (라이브러리 없음)")
-    
-    # 색상 감정 분석기 로드
-    if COLOR_AVAILABLE:
-        try:
+
+        if COLOR_AVAILABLE:
             _MODELS['color_analyzer'] = ColorEmotionInference()
-            if verbose:
-                print("색상 감정 분석기 로드 완료")
-            success_count += 1
-        except Exception as e:
-            if verbose:
-                print(f"색상 감정 분석기 로드 실패: {e}")
-            _MODELS['color_analyzer'] = None
-    else:
-        if verbose:
-            print("색상 감정 분석기를 사용할 수 없습니다 (모듈 없음)")
-    
-    # 얼굴 감정 분석기 로드
-    if FACE_AVAILABLE:
-        try:
+
+        if FACE_AVAILABLE:
             _MODELS['face_analyzer'] = FaceEmotionAnalyzer(
                 experiment_path=face_experiment_path,
                 model_dir=face_model_dir
             )
-            if verbose:
-                print("얼굴 감정 분석기 로드 완료")
-            success_count += 1
-        except Exception as e:
-            if verbose:
-                print(f"얼굴 감정 분석기 로드 실패: {e}")
-            _MODELS['face_analyzer'] = None
-    else:
-        if verbose:
-            print("얼굴 감정 분석기를 사용할 수 없습니다 (모듈 없음)")
-    
-    # CLIP 감정 분석기 로드
-    if CLIP_AVAILABLE:
-        try:
+
+        if CLIP_AVAILABLE:
+            # 수정된 CLIPEmotionInference (내부적으로 CPU 대기 로직 포함)
             _MODELS['clip_analyzer'] = CLIPEmotionInference(clip_model_path)
-            if verbose:
-                print("CLIP 감정 분석기 로드 완료")
-            success_count += 1
-        except Exception as e:
-            if verbose:
-                print(f"CLIP 감정 분석기 로드 실패: {e}")
-            _MODELS['clip_analyzer'] = None
-    else:
-        if verbose:
-            print("CLIP 감정 분석기를 사용할 수 없습니다 (모듈 없음)")
-    
-    # Moondream 캡션 생성기 로드
-    if MOONDREAM_AVAILABLE:
-        try:
+
+        if MOONDREAM_AVAILABLE:
             _MODELS['captioner'] = MoondreamCaptioner(moondream_model_path)
-            if verbose:
-                print("Moondream2 캡션 생성기 로드 완료")
-            success_count += 1
-        except Exception as e:
-            if verbose:
-                print(f"Moondream2 로드 실패: {e}")
-            _MODELS['captioner'] = None
-    else:
-        if verbose:
-            print("Moondream2 캡션 생성기를 사용할 수 없습니다 (모듈 없음)")
-    
-    if verbose:
-        print(f"모델 로드 완료! ({success_count}/{total_count} 성공)")
-    
-    return success_count > 0
+
+        return True
+    except Exception as e:
+        print(f"초기 로드 실패: {e}")
+        return False
 
 # 2. YOLO 사람 탐지
 def yolo(image_path: str, confidence: float = 0.5) -> Dict:
@@ -190,7 +131,6 @@ def yolo(image_path: str, confidence: float = 0.5) -> Dict:
     except Exception as e:
         return {"has_person": False, "error": str(e)}
 
-# 3. 이미지 캡션 생성
 def moondream2(image_path: str) -> str:
     """이미지 캡션 생성"""
     if _MODELS['captioner'] is None:
@@ -201,8 +141,7 @@ def moondream2(image_path: str) -> str:
     except Exception as e:
         print(f"캡션 생성 실패: {e}")
         return "Caption generation failed"
-    
-# 4.1. 얼굴 행동 감정 추출
+
 def emotic(image_path: str, person_detections: List[Dict]) -> Optional[Dict]:
     if _MODELS['face_analyzer'] is None:
         return None
@@ -224,7 +163,6 @@ def color(image_path: str, n_colors: int = 5) -> Optional[Dict]:
         print(f"색상 감정 분석 실패: {e}")
         return None
 
-# 4.3. 캡션 감정 추출 (백슬래시 제거)
 def caption(image_path: str, caption_text: str) -> Optional[Dict]:
     if _MODELS['clip_analyzer'] is None or not caption_text or caption_text == "Caption generation not available":
         return None
@@ -235,7 +173,6 @@ def caption(image_path: str, caption_text: str) -> Optional[Dict]:
         print(f"캡션 감정 분석 실패: {e}")
         return None
 
-# 5. 감정 통합 (함수명을 integrate_emotions로 변경)
 def integrate_emotions(
     emotic_result: Optional[Dict] = None,
     color_result: Optional[Dict] = None,
@@ -282,80 +219,49 @@ def integrate_emotions(
     
     return "Unknown"
 
-# 6. 전체 감정 분석 파이프라인
 def emotion(image_path: str, confidence: float = 0.5, n_colors: int = 5) -> Dict:
-    print(f"감정 분석 시작: {Path(image_path).name}")
-    
-    # 1. 사람 탐지
-    person_detection = yolo(image_path, confidence)
+
+    print(f"--- 분석 파이프라인 가동: {Path(image_path).name} ---")
+
+    person_detection = yolo_inference(image_path, confidence)
     has_person = person_detection.get("has_person", False)
-    person_detections = person_detection.get("detections", [])
-    
-    print(f"사람 탐지: {'있음' if has_person else '없음'}")
-    
-    # 2. 캡션 생성
+
     caption_text = moondream2(image_path)
-    print(f"캡션: {caption_text[:50]}...")
-    
-    # 3. 개별 감정 분석
+
     emotic_result = None
     if has_person:
-        emotic_result = emotic(image_path, person_detections)
-        if emotic_result and emotic_result.get('top_emotions'):
-            print(f"얼굴/행동 감정: {emotic_result['top_emotions'][0][0]} ({emotic_result['top_emotions'][0][1]:.1f}%)")
-        else:
-            print("얼굴/행동 감정: 분석 실패")
-            
-    color_result = color(image_path, n_colors)
-    if color_result and color_result.get('top_emotions'):
-        print(f"색상 감정: {color_result['top_emotions'][0][0]} ({color_result['top_emotions'][0][1]:.1f}%)")
-    else:
-        print("색상 감정: 분석 실패")
-    
-    caption_result = caption(image_path, caption_text)
-    if caption_result and caption_result.get('top_emotions'):
-        print(f"캡션 감정: {caption_result['top_emotions'][0][0]} ({caption_result['top_emotions'][0][1]:.1f}%)")
-    else:
-        print("캡션 감정: 분석 실패")
-    
-    # 4. 결과 통합
+        emotic_result = emotic(image_path, person_detection.get("detections", []))
+
+    color_result = color(image_path, n_colors)  # CPU 연산 (K-means)
+    caption_result = caption(image_path, caption_text)  # CLIP GPU On-demand
+
     final_emotion = integrate_emotions(emotic_result, color_result, caption_result, has_person)
-    
-    print(f"최종 감정: {final_emotion}")
-    
+
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
     return {
         "emotion": final_emotion,
         "caption": caption_text,
         "has_person": has_person
     }
 
-# 7. 음악 생성
 def _load_musicgen_model(verbose: bool = True):
-    if not MUSICGEN_AVAILABLE:
-        if verbose:
-            print("MusicGen을 사용할 수 없습니다 (transformers 라이브러리 없음)")
-        return False
-    
-    if _MODELS.get('music_processor') is not None and _MODELS.get('music_model') is not None:
-        if verbose:
-            print("기존 MusicGEN 모델 재사용")
+    """MusicGen을 GPU에 영구 적재하는 전용 함수"""
+    if _MODELS.get('music_model') is not None:
         return True
-    
+
     try:
-        if verbose:
-            print("MusicGEN 모델 로딩 중...")
-        
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         _MODELS['music_processor'] = AutoProcessor.from_pretrained("facebook/musicgen-small")
+
         _MODELS['music_model'] = MusicgenForConditionalGeneration.from_pretrained("facebook/musicgen-small").to(device)
         _MODELS['music_device'] = device
-        
-        if verbose:
-            print(f"MusicGEN 모델 로딩 완료! (디바이스: {device})")
+        _MODELS['music_model'].eval()
         return True
     except Exception as e:
-        if verbose:
-            print(f"MusicGEN 로딩 실패: {e}")
+        print(f"MusicGen 상시 적재 실패: {e}")
         return False
 
 def emotion_to_music_prompt(emotion: str, caption: str = "") -> str:
@@ -370,78 +276,33 @@ def emotion_to_music_prompt(emotion: str, caption: str = "") -> str:
     
     return full_prompt
 
+
 def generate_music(emotion_text: str, caption: str = "", max_duration: int = 10, verbose: bool = True) -> Dict:
-    # MusicGen 모델 로드
-    if not _load_musicgen_model(verbose):
-        return {
-            "success": False,
-            "emotion": emotion_text,
-            "error": "MusicGen 모델을 로드할 수 없습니다"
-        }
-    
-    # 감정과 캡션을 음악 프롬프트로 변환
+    if _MODELS['music_model'] is None:
+        return {"success": False, "error": "MusicGen Not Ready"}
+
     prompt = emotion_to_music_prompt(emotion_text, caption)
-    
-    if verbose:
-        print(f"음악 생성: {emotion_text}")
-        print(f"프롬프트: {prompt}")
-    
+
     try:
-        processor = _MODELS['music_processor']
-        model = _MODELS['music_model']
         device = _MODELS['music_device']
-        
-        # 입력 처리 후 GPU로 이동
-        inputs = processor(
-            text=[prompt],
-            padding=True,
-            return_tensors="pt"
-        ).to(device)
-        
+        inputs = _MODELS['music_processor'](text=[prompt], padding=True, return_tensors="pt").to(device)
+
         with torch.no_grad():
-            audio_values = model.generate(
-                **inputs,
-                max_new_tokens=500,
-                do_sample=True,
-                temperature=1.0,
-                top_k=250,
-                top_p=0.95
-            )
-        
-        # CPU로 이동
+            audio_values = _MODELS['music_model'].generate(**inputs, max_new_tokens=500)
+
         audio_data = audio_values[0, 0].detach().cpu().numpy()
-        sampling_rate = model.config.audio_encoder.sampling_rate
-        duration = len(audio_data) / sampling_rate
-        volume = (audio_data**2).mean()**0.5
-        
-        if verbose:
-            print(f"음악 생성 완료: {duration:.1f}초")
-        
+        sampling_rate = _MODELS['music_model'].config.audio_encoder.sampling_rate
+
         return {
             "success": True,
-            "emotion": emotion_text,
-            "caption": caption,
-            "prompt": prompt,
-            "duration": duration,
-            "volume": volume,
             "audio_data": audio_data,
-            "sampling_rate": sampling_rate
-        }
-        
-    except Exception as e:
-        if verbose:
-            print(f"음악 생성 실패: {e}")
-        return {
-            "success": False,
-            "emotion": emotion_text,
-            "caption": caption,
-            "error": str(e)
+            "sampling_rate": sampling_rate,
+            "prompt": prompt
         }
     finally:
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
-# 백엔드 호환 함수들
 def initialize_system(**kwargs) -> bool:
     return model_load(**kwargs)
 

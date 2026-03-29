@@ -19,15 +19,33 @@ logger = logging.getLogger(__name__)
 # ── MLP ─────────────────────────────────────────────────────────
 class MLP(nn.Module):
     """감정 분류를 위한 MLP 모델"""
-    def __init__(self, in_dim=1024, hidden=(512, 256), out_dim=17, dropout=0.2):
-        super().__init__()
-        layers = []
-        d = in_dim
-        for h in hidden:
-            layers += [nn.Linear(d, h), nn.ReLU(True), nn.Dropout(dropout)]
-            d = h
-        layers += [nn.Linear(d, out_dim)]  # logits
-        self.net = nn.Sequential(*layers)
+
+    def __init__(self, model_path: str, device: str = "auto"):
+        self.emotions = [
+            "Happiness", "Confidence", "Surprise", "Pain", "Disquietment",
+            "Fear", "Yearning", "Excitement", "Embarrassment", "Affection",
+            "Aversion", "Engagement", "Anticipation", "Sensitivity",
+            "Annoyance", "Sympathy", "Pleasure"
+        ]
+
+        if device == "auto":
+            self.target_device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        else:
+            self.target_device = torch.device(device)
+
+        self.idle_device = torch.device("cpu")
+
+        logger.info(f"CLIP 감정 분석기 초기화 - 타겟: {self.target_device}, 대기: {self.idle_device}")
+
+        self.clip_model = None
+        self.clip_processor = None
+        self.mlp_model: Optional[MLP] = None
+        self.thresholds: Optional[np.ndarray] = None
+        self.model_path = model_path
+        self.expected_in_dim: Optional[int] = None
+
+        self.load_clip_model()
+        self.load_mlp_model(model_path)
 
     def forward(self, x):
         return self.net(x)
@@ -68,13 +86,13 @@ class CLIPEmotionInference:
 
     # ── 로드 ────────────────────────────────────────────────────
     def load_clip_model(self):
-        """CLIP 모델 로드"""
+        """CLIP 모델을 CPU에 로드하여 VRAM 점유 방지"""
         try:
-            logger.info("CLIP 모델 로드 중...")
-            self.clip_model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32").to(self.device)
+            logger.info("CLIP 모델 로드 중 (CPU)...")
+            # self.device 대신 self.idle_device 사용
+            self.clip_model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32").to(self.idle_device)
             self.clip_processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
             self.clip_model.eval()
-            logger.info("CLIP 모델 로드 완료")
         except Exception as e:
             logger.error(f"CLIP 모델 로드 실패: {e}")
             raise
@@ -146,7 +164,7 @@ class CLIPEmotionInference:
                 logger.warning(f"체크포인트 out_dim={out_dim} 이(가) emotions 수={len(self.emotions)}와 다릅니다.")
 
             # MLP 빌드 및 로드
-            self.mlp_model = MLP(in_dim=in_dim, hidden=tuple(hidden), out_dim=out_dim, dropout=dropout).to(self.device)
+            self.mlp_model = MLP(in_dim=in_dim, hidden=tuple(hidden), out_dim=out_dim, dropout=dropout).to(self.idle_device)
             self.mlp_model.load_state_dict(state_dict, strict=True)
             self.mlp_model.eval()
 
@@ -231,72 +249,68 @@ class CLIPEmotionInference:
 
     # ── 추론 ───────────────────────────────────────────────────
     def predict_emotions(
-        self,
-        image_path: str,
-        caption: str = "",
-        extra_features: Optional[Union[List[float], np.ndarray, torch.Tensor]] = None
+            self,
+            image_path: str,
+            caption: str = "",
+            extra_features: Optional[Union[List[float], np.ndarray, torch.Tensor]] = None
     ) -> Dict:
+        import gc  # 가비지 컬렉션
         """
-        extra_features 예:
-          - 사람 탐지 분기에서: [has_person(0/1), min(person_count,5)/5]
-          - 기타 스칼라 피처들
-        아무것도 안 주면 0-padding으로 자동 정렬 → 차원 오류 방지
+        [이력서 전략 반영] 
+        - On-demand Load: 추론 시점에만 GPU로 이동
+        - Purging Out: 추론 종료 후 즉시 CPU 반환 및 캐시 삭제
         """
         try:
+            # 1. 모델을 GPU로 이동 (On-demand Loading)
+            if self.target_device.type == 'cuda':
+                self.clip_model.to(self.target_device)
+                self.mlp_model.to(self.target_device)
+
+            # 2. 특징 추출 및 추론
             feats = self.encode_image_text_features(image_path, caption)
             if feats is None:
                 raise ValueError("특징 추출 실패")
 
-            # 차원 정렬 (1024 → expected_in_dim)
-            feats = self._merge_with_extras(feats, extra_features).to(self.device)
+            # 차원 정렬 및 디바이스 이동
+            feats = self._merge_with_extras(feats, extra_features).to(self.target_device)
 
             with torch.no_grad():
                 logits = self.mlp_model(feats)
-                probs = torch.sigmoid(logits).cpu().numpy()[0]  # (out_dim,)
+                # 즉시 CPU로 넘겨서 GPU 참조를 끊음
+                probs = torch.sigmoid(logits).cpu().numpy()[0]
 
-            # 퍼센트 변환
+                # 3. 결과 가공 (이 부분은 CPU에서 수행되므로 안전함)
             emotion_percentages = {self.emotions[i] if i < len(self.emotions) else f"Label_{i}": float(p) * 100.0
                                    for i, p in enumerate(probs)}
-
-            # 상위 정렬
             sorted_emotions = sorted(emotion_percentages.items(), key=lambda x: x[1], reverse=True)
 
-            # 임계값(멀티라벨) 적용
             thr = self.thresholds if self.thresholds is not None else np.full(len(probs), 0.5, dtype=np.float32)
-            if thr.shape[0] != len(probs):
-                logger.warning("임계값 길이가 출력 차원과 달라 0.5로 재설정합니다.")
-                thr = np.full(len(probs), 0.5, dtype=np.float32)
-
             predictions = (probs >= thr).astype(int)
-            predicted_emotions = []
-            for i, pred in enumerate(predictions):
-                name = self.emotions[i] if i < len(self.emotions) else f"Label_{i}"
-                if pred == 1:
-                    predicted_emotions.append(name)
+            predicted_emotions = [self.emotions[i] for i, pred in enumerate(predictions) if pred == 1]
 
             return {
                 "method": "clip_mlp_prediction",
                 "image_path": str(image_path),
-                "caption": caption,
-                "emotion_percentages": {k: round(v, 3) for k, v in emotion_percentages.items()},
-                "top_emotions": [(e, round(p, 3)) for e, p in sorted_emotions[:5]],
                 "predicted_emotions": predicted_emotions,
-                "model_info": {
-                    "model_path": self.model_path,
-                    "expected_in_dim": self.expected_in_dim,
-                    "actual_feat_dim_before_align": 1024,
-                    "extra_features_used": (extra_features is not None),
-                    "threshold_used": "custom" if (self.thresholds is not None) else "default_0.5"
-                }
+                "emotion_percentages": {k: round(v, 3) for k, v in emotion_percentages.items()},
+                "top_emotions": [(e, round(p, 3)) for e, p in sorted_emotions[:5]]
             }
 
         except Exception as e:
             logger.error(f"MLP 감정 예측 실패: {e}")
-            return {
-                "method": "clip_mlp_prediction",
-                "error": str(e),
-                "emotion_percentages": {emotion: 0.0 for emotion in self.emotions}
-            }
+            return {"error": str(e)}
+
+        finally:
+            # 4. [핵심] 자원 해제 (Purging Out)
+            # 모델을 다시 CPU로 보내서 MusicGen의 VRAM 공간 확보
+            self.clip_model.to(self.idle_device)
+            self.mlp_model.to(self.idle_device)
+
+            # 명시적 메모리 정리
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            logger.info("VRAM 해제 완료: 전처리 모델 CPU 반환 및 캐시 정리")
 
     # ── 임계값 로드 ────────────────────────────────────────────
     def load_custom_thresholds(self, threshold_path: str):

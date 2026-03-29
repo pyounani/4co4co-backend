@@ -1,4 +1,5 @@
 import torch
+import gc
 from PIL import Image
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from pathlib import Path
@@ -7,110 +8,80 @@ import warnings
 import logging
 
 warnings.filterwarnings('ignore')
-
-# 로깅 설정
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
+
 class MoondreamCaptioner:
-    
-    def __init__(self, model_path: Optional[str] = None, 
-                 model_revision: str = "2025-06-21", 
+    def __init__(self, model_path: Optional[str] = None,
+                 model_revision: str = "2025-06-21",
                  device: str = "cuda",
                  caption_length: str = "short"):
-        
+
         self.model_path = model_path
         self.model_revision = model_revision
-        self.device = device
+        self.target_device = torch.device("cuda" if torch.cuda.is_available() and device == "cuda" else "cpu")
+        self.idle_device = torch.device("cpu")  # 평상시 대기 장소
         self.caption_length = caption_length
-        
-        # 모델 변수 초기화
+
         self.model = None
         self.tokenizer = None
-        
-        logger.info(f"MoondreamCaptioner 초기화")
-        # logger.info(f"   디바이스: {self.device}")
-        # logger.info(f"   모델 리비전: {self.model_revision}")
-        # logger.info(f"   캡션 길이: {self.caption_length}")
-    
+
+        self.load_model()
+        logger.info(f"MoondreamCaptioner 초기화 완료 (CPU 대기 모드)")
+
     def load_model(self):
-        """Moondream2 모델 로드"""
+        """모델을 시스템 메모리(RAM)에 로드하여 대기시킵니다."""
         if self.model is not None:
             return
-            
-        logger.info("Moondream2 모델 로드 중...")
+
         try:
-            # GPU 사용 설정
-            if self.device == "cuda" and torch.cuda.is_available():
-                logger.info(f"   GPU 사용: {torch.cuda.get_device_name(0)}")
-                logger.info(f"   VRAM: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f}GB")
-                device_map = "cuda"
-                torch_dtype = torch.float16
-            else:
-                logger.info("   CPU 사용")
-                device_map = "cpu"
-                torch_dtype = torch.float32
-            
-            # 모델 로드
             model_name = self.model_path if self.model_path else "vikhyatk/moondream2"
-            
+            torch_dtype = torch.float16 if self.target_device.type == "cuda" else torch.float32
+
             self.model = AutoModelForCausalLM.from_pretrained(
                 model_name,
                 revision=self.model_revision,
                 trust_remote_code=True,
-                torch_dtype=torch_dtype,
-                device_map=device_map
-            )
-            
+                torch_dtype=torch_dtype
+            ).to(self.idle_device)  # CPU로 로드
+
             self.tokenizer = AutoTokenizer.from_pretrained(
-                model_name, 
+                model_name,
                 revision=self.model_revision
             )
-            
-            # 모델 디바이스 확인
-            model_device = next(self.model.parameters()).device
-            logger.info(f"Moondream2 모델 로드 완료! 디바이스: {model_device}")
-            
+            self.model.eval()
         except Exception as e:
             logger.error(f"모델 로드 실패: {e}")
             raise
-    
+
     def generate_caption(self, image_path: str) -> str:
+        """추론 시점에만 GPU로 이동 후 즉시 Purge"""
         try:
-            # 모델이 로드되지 않았으면 로드
-            if self.model is None:
-                self.load_model()
-            
-            # 이미지 로드 및 전처리
+            if self.target_device.type == "cuda":
+                self.model.to(self.target_device)
+
             image_path = Path(image_path)
-            if not image_path.exists():
-                raise FileNotFoundError(f"이미지를 찾을 수 없습니다: {image_path}")
-            
             image = Image.open(image_path).convert('RGB')
-            
-            # Moondream2의 caption 메서드 사용
-            caption_result = self.model.caption(
-                image,
-                length=self.caption_length
-            )
-            
-            # 결과가 딕셔너리 형태인 경우 캡션 추출
-            if isinstance(caption_result, dict):
-                caption = caption_result.get("caption", "")
-            else:
-                caption = str(caption_result)
-            
-            if not caption.strip():
-                logger.warning(f"빈 캡션 생성: {image_path.name}")
-                return "Caption generation returned empty result"
-            
-            logger.debug(f"캡션 생성 완료: {image_path.name} -> {caption[:50]}...")
+
+            with torch.no_grad():
+                caption_result = self.model.caption(image, length=self.caption_length)
+
+            caption = caption_result.get("caption", "") if isinstance(caption_result, dict) else str(caption_result)
             return caption.strip()
-            
+
         except Exception as e:
-            logger.error(f"캡션 생성 실패 {image_path}: {e}")
-            return f"Caption generation failed: {str(e)}"
-      
+            logger.error(f"캡션 생성 실패: {e}")
+            return "Caption generation failed"
+
+        finally:
+            if self.target_device.type == "cuda":
+                self.model.to(self.idle_device)
+
+                gc.collect()
+                torch.cuda.empty_cache()
+                logger.info(f"Moondream2 VRAM 해제 완료 (VRAM Stability 확보)")
+
     def set_caption_length(self, length: str):
         """캡션 길이 설정 변경"""
         if length in ['short', 'normal', 'long']:

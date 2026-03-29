@@ -3,16 +3,16 @@ import torch.nn as nn
 
 class Emotic(nn.Module):
   ''' Emotic Model'''
-  def __init__(self, num_context_features, num_body_features):
-    super(Emotic,self).__init__()
-    self.num_context_features = num_context_features
-    self.num_body_features = num_body_features
-    self.fc1 = nn.Linear((self.num_context_features + num_body_features), 256)
-    self.bn1 = nn.BatchNorm1d(256)
-    self.d1 = nn.Dropout(p=0.5)
-    self.fc_cat = nn.Linear(256, 26)
-    self.fc_cont = nn.Linear(256, 3)
-    self.relu = nn.ReLU()
+
+  def __init__(self, model_path, context_dim=2048, body_dim=2048):
+    self.target_device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    self.idle_device = torch.device("cpu")
+
+    self.model = Emotic(num_context_features=context_dim, num_body_features=body_dim)
+    checkpoint = torch.load(model_path, map_location="cpu")
+    self.model.load_state_dict(checkpoint)
+    self.model.to(self.idle_device)
+    self.model.eval()
 
     
   def forward(self, x_context, x_body):
