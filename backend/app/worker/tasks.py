@@ -69,7 +69,6 @@ def update_db_result(collection, lantern_id: str, image_key: str, status: str, s
 
 
 def call_ai_server_sync(image_key: str) -> str:
-    # ... (기존과 동일) ...
     url = f"{settings.AI_SERVER_URL}{settings.API_PREFIX}/generate-music"
     payload = {"image_path": image_key}
     response = requests.post(url, json=payload, timeout=600)
