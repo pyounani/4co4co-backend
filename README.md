@@ -1,7 +1,4 @@
-# 프로젝트 설명
-
-<img width="337" height="224" alt="image" src="https://github.com/user-attachments/assets/54a08ce2-bc6d-4a36-8dd3-a0db8d1fba40" />
-
+# About Project
 
 사용자가 이미지를 3장 업로드하면, 이미지 기반 감정 분석을 통해 AI 배경음을 생성하고 이미지와 배경음으로 인터랙티브 전시를 즐길 수 있는 서비스입니다. 추억하고 싶은 순간을 단순히 보는 것이 아니라, 소리와 인터랙션을 함께 활용하여 실제로 느낄 수 있도록 만들고자 했습니다.
 
