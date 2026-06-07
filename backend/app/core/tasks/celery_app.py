@@ -61,4 +61,10 @@ celery_app.conf.update(
     # Worker prefetch 최소화
     # 긴 AI task에서 특정 worker 쏠림 방지
     worker_prefetch_multiplier=1,
+
+    # 워커 프로세스 메모리 누수 방지 — 50 태스크 후 재시작
+    worker_max_tasks_per_child=50,
+
+    # result backend(MongoDB) 보존 기간 — 완료 즉시 DB 저장되므로 5분으로 충분
+    result_expires=300,
 )
