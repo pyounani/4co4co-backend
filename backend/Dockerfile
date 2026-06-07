@@ -1,30 +1,21 @@
 FROM python:3.11-slim
 
-# 파이썬 출력 버퍼링 비활성화
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONPATH=/app
 
-# 작업 디렉토리
 WORKDIR /app
 
-# 시스템 의존성 설치 (필요한 경우에만 주석 해제)
-# RUN apt-get update && apt-get install -y --no-install-recommends \
-#     curl gcc libpq-dev \
-#     && rm -rf /var/lib/apt/lists/*
+# uv 설치 (공식 Docker 이미지에서 바이너리만 복사)
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /bin/uv
 
-# Poetry 설치
-RUN pip install --no-cache-dir poetry==1.8.3
+# 의존성 파일 복사
+COPY pyproject.toml uv.lock ./
 
-# pyproject.toml, poetry.lock 복사
-COPY pyproject.toml poetry.lock* ./
-
-# 의존성 설치
-RUN poetry config virtualenvs.create false \
-    && poetry install --no-root --no-dev
+# 시스템 Python에 직접 설치 (venv 불필요), dev 그룹 제외
+RUN UV_SYSTEM_PYTHON=1 uv sync --frozen --no-group dev --no-install-project
 
 # 앱 코드 복사
 COPY . .
 
-# 실행
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
