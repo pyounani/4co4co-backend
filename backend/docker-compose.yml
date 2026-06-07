@@ -6,7 +6,7 @@ services:
       - "6379:6379"
     # 데이터 보존 설정 -> 60초마다 키가 변경되면 디스크에 저장
     # 프로젝트 상 작업 결과를 몽고디비를 활용 -> 빠른 전달에 집중해서 AOF가 아닌 RDB 복구 방식 선택
-    command: redis-server --save 60 1 --loglevel warning
+    command: redis-server --save 60 1 --maxmemory 128mb --maxmemory-policy volatile-lru --loglevel warning
 
   mongo:
     image: mongo:latest

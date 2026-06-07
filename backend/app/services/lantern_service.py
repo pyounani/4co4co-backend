@@ -4,13 +4,12 @@ from typing import Optional, List
 
 from fastapi import UploadFile
 
-from app.core.config.s3 import upload_file_to_s3, generate_presigned_url
+from app.core.s3 import upload_file_to_s3, generate_presigned_url
 from app.core.exceptions.types import FileSaveError, NotFoundError, ForbiddenError, ValidationError
 from app.core.tasks.music_tasks import process_lantern_music
 from app.repositories.lantern_repository import LanternRepository
 from app.schemas.db.lantern import LanternDBModel, ImageInfo, MusicStatusInfo
-from app.schemas.response.lantern_detail_response import LanternDetailResponseModel
-from app.schemas.response.lantern_response import LanternResponseModel
+from app.schemas.response.lantern import LanternDetailResponseModel, LanternResponseModel
 from app.core.logging.logger import get_logger
 
 logger = get_logger(__name__)
@@ -154,7 +153,7 @@ class LanternService:
 
         musics = []
         for music in lantern.get("musics", []):
-            s3_key = music.get("s3_key")
+            s3_key = music.get("s3_path")
             if s3_key:
                 url = await generate_presigned_url(s3_key)
                 if url:

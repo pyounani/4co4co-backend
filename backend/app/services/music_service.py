@@ -18,7 +18,8 @@ def call_ai_server(image: str) -> str:
 
     try:
         logger.info(f"[AI Server] Request: url={url}, payload={payload}")
-        resp = httpx.post(url, json=payload, timeout=1000.0)
+        with httpx.Client(timeout=35.0) as client:
+            resp = client.post(url, json=payload)
         resp.raise_for_status()
         body = resp.json()
         logger.info(f"[AI Server] Response: status_code={resp.status_code}, body={body}")

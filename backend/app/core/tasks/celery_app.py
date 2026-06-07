@@ -42,8 +42,8 @@ celery_app.conf.update(
         "interval_max": 3,
     },
 
-    # Retry 정책
-    task_default_retry_delay=5,
+    # Retry 정책 — AI 복구 시간(~30s)을 고려하여 재시도 전 충분히 대기
+    task_default_retry_delay=30,
     task_annotations={
         "*": {
             "max_retries": 3,
@@ -61,4 +61,10 @@ celery_app.conf.update(
     # Worker prefetch 최소화
     # 긴 AI task에서 특정 worker 쏠림 방지
     worker_prefetch_multiplier=1,
+
+    # 워커 프로세스 메모리 누수 방지 — 50 태스크 후 재시작
+    worker_max_tasks_per_child=50,
+
+    # result backend(MongoDB) 보존 기간 — 완료 즉시 DB 저장되므로 5분으로 충분
+    result_expires=300,
 )
