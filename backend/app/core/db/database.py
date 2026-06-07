@@ -31,7 +31,7 @@ async def lifespan(app: FastAPI):
         logger.info("MongoDB ping successful, connection established")
 
         # ensure unique index on lantern_id field
-        await app.database["lanterns"].create_index(
+        await app.database["lantern"].create_index(
             [("lantern_id", 1)],
             unique=True,
             name="unique_lantern_id"

@@ -36,5 +36,3 @@ def create_app() -> FastAPI:
     app.openapi = lambda: custom_openapi(app)
 
     return app
-
-app = create_app()

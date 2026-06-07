@@ -9,7 +9,7 @@ from sse_starlette.sse import EventSourceResponse
 from app.core.config.settings import settings
 from app.core.db.database import get_mongo_client
 from app.core.logging.logger import get_logger
-from app.core.response.response import success_response, success_no_cache_response
+from app.core.response import success_response, success_no_cache_response
 from app.core.validation.lantern_validation import validate_name, validate_images
 from app.repositories.lantern_repository import LanternRepository
 from app.schemas.response.lantern_detail_response import LanternDetailResponseModel
