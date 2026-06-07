@@ -13,8 +13,7 @@ from app.core.logging.logger import get_logger
 from app.core.response import success_response, success_no_cache_response
 from app.core.validation.lantern_validation import validate_name, validate_images
 from app.repositories.lantern_repository import LanternRepository
-from app.schemas.response.lantern_detail_response import LanternDetailResponseModel
-from app.schemas.response.lantern_response import LanternResponseModel
+from app.schemas.response.lantern import LanternDetailResponseModel, LanternResponseModel
 from app.schemas.response.schemas import ResponseModel
 from app.schemas.swagger import (
     error_400, error_404, error_500,
