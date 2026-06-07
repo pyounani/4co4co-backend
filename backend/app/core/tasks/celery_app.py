@@ -42,8 +42,8 @@ celery_app.conf.update(
         "interval_max": 3,
     },
 
-    # Retry 정책
-    task_default_retry_delay=5,
+    # Retry 정책 — AI 복구 시간(~30s)을 고려하여 재시도 전 충분히 대기
+    task_default_retry_delay=30,
     task_annotations={
         "*": {
             "max_retries": 3,
