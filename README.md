@@ -28,21 +28,15 @@
 
 #### 1. Celery Worker 장애 대응
 
-- Celery Worker 장애로 인한 task ACK 이전 유실 및 중복 실행 문제를 확인하고, late ACK 및 idempotency 기반 재처리 구조를 적용해 안정성을 개선했습니다.
+- `acks_late=True` 설정으로 task 실행 완료 후 ACK 처리 → 워커 장애 시 task 유실 방지
+- 재시도 전 MongoDB에서 해당 이미지가 이미 `success` 상태인지 확인(멱등성 체크) → 중복 AI 호출 방지
+- 최대 3회 exponential backoff retry
 
 → 자세한 분석은 [Blog](https://pyounani.tistory.com/35) 참고
 <br />
 <br />
 
-#### 2. Redis Pub/Sub 메시지 유실 대응
-
-- Redis Pub/Sub 기반 SSE 통신 환경에서 구독 시점 차이로 발생할 수 있는 메시지 유실 문제를 분석하고, MongoDB 기반 Fallback 로직을 통해 안정성을 개선했습니다.
-
-→ 자세한 분석은 [Blog](https://pyounani.tistory.com/36) 참고
-<br />
-<br />
-
-#### 3. GPU 메모리 병목 해결
+#### 2. GPU 메모리 병목 해결
 
 - VRAM 8GB 환경에서 다중 AI 모델 서빙 시 발생하는 메모리 병목 문제를 분석하고, 입력 기반 모델 동적 로딩 구조를 통해 GPU 사용량을 안정화했습니다.
 
