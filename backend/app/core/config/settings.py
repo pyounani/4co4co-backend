@@ -38,7 +38,9 @@ class Settings(BaseSettings):
     REDIS_URL: str = Field(..., description="Redis URL for Celery Broker and Pub/Sub")
 
     # SSE
-    SSE_TIMEOUT: int = Field(180, gt=0)
+    SSE_POLL_INTERVAL: int = Field(2, gt=0)
+    SSE_CONNECTION_TIMEOUT: int = Field(150, gt=0)
+    SSE_KEEPALIVE_INTERVAL: int = Field(15, gt=0)
 
     @property
     def cors_origins_list(self) -> list[str]:
