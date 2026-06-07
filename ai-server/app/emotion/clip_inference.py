@@ -66,10 +66,12 @@ class CLIPEmotionInference:
 
         # 디바이스
         if device == "auto":
-            self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            self.target_device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         else:
-            self.device = torch.device(device)
-        logger.info(f"CLIP 감정 분석기 초기화 - 디바이스: {self.device}")
+            self.target_device = torch.device(device)
+        self.device = self.target_device  # encode_image_text_features 호환용
+        self.idle_device = torch.device("cpu")
+        logger.info(f"CLIP 감정 분석기 초기화 - 타겟: {self.target_device}, 대기: {self.idle_device}")
 
         self.clip_model = None
         self.clip_processor = None

@@ -1,3 +1,4 @@
+import gc
 import warnings
 from pathlib import Path
 from typing import List, Dict, Optional
@@ -102,11 +103,11 @@ def model_load(
 def yolo(image_path: str, confidence: float = 0.5) -> Dict:
     if _MODELS['yolo'] is None:
         return {"has_person": False, "error": "YOLO 모델이 로드되지 않음"}
-    
+
     try:
         results = _MODELS['yolo'](image_path, verbose=False)
         person_detections, has_person = [], False
-        
+
         for result in results:
             boxes = result.boxes
             if boxes is not None:
@@ -121,7 +122,7 @@ def yolo(image_path: str, confidence: float = 0.5) -> Dict:
                             "confidence": conf,
                             "area": (bbox[2] - bbox[0]) * (bbox[3] - bbox[1])
                         })
-        
+
         return {
             "has_person": has_person,
             "person_count": len(person_detections),
@@ -130,6 +131,11 @@ def yolo(image_path: str, confidence: float = 0.5) -> Dict:
         }
     except Exception as e:
         return {"has_person": False, "error": str(e)}
+    finally:
+        # YOLO 추론 후 즉시 CPU로 반환
+        if torch.cuda.is_available() and hasattr(_MODELS['yolo'], 'model'):
+            _MODELS['yolo'].model.to('cpu')
+            torch.cuda.empty_cache()
 
 def moondream2(image_path: str) -> str:
     """이미지 캡션 생성"""
@@ -172,6 +178,39 @@ def caption(image_path: str, caption_text: str) -> Optional[Dict]:
     except Exception as e:
         print(f"캡션 감정 분석 실패: {e}")
         return None
+
+def evict_emotion_models() -> None:
+    """Phase 전환 전 감정 분석 모델 전체를 CPU로 내리는 안전망."""
+    if not torch.cuda.is_available():
+        return
+
+    m = _MODELS.get('yolo')
+    if m is not None and hasattr(m, 'model'):
+        m.model.to('cpu')
+
+    m = _MODELS.get('clip_analyzer')
+    if m is not None:
+        if hasattr(m, 'clip_model') and m.clip_model is not None:
+            m.clip_model.to('cpu')
+        if hasattr(m, 'mlp_model') and m.mlp_model is not None:
+            m.mlp_model.to('cpu')
+
+    m = _MODELS.get('face_analyzer')
+    if m is not None:
+        if hasattr(m, 'models') and m.models is not None:
+            for sub in m.models:
+                if hasattr(sub, 'to'):
+                    sub.to('cpu')
+        if hasattr(m, 'yolo') and m.yolo is not None:
+            m.yolo.to('cpu')
+
+    m = _MODELS.get('captioner')
+    if m is not None and hasattr(m, 'model') and m.model is not None:
+        m.model.to('cpu')
+
+    gc.collect()
+    torch.cuda.empty_cache()
+
 
 def integrate_emotions(
     emotic_result: Optional[Dict] = None,
@@ -223,7 +262,7 @@ def emotion(image_path: str, confidence: float = 0.5, n_colors: int = 5) -> Dict
 
     print(f"--- 분석 파이프라인 가동: {Path(image_path).name} ---")
 
-    person_detection = yolo_inference(image_path, confidence)
+    person_detection = yolo(image_path, confidence)
     has_person = person_detection.get("has_person", False)
 
     caption_text = moondream2(image_path)
@@ -256,7 +295,9 @@ def _load_musicgen_model(verbose: bool = True):
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         _MODELS['music_processor'] = AutoProcessor.from_pretrained("facebook/musicgen-small")
 
-        _MODELS['music_model'] = MusicgenForConditionalGeneration.from_pretrained("facebook/musicgen-small").to(device)
+        _MODELS['music_model'] = MusicgenForConditionalGeneration.from_pretrained(
+            "facebook/musicgen-small", torch_dtype=torch.float16
+        ).to(device)
         _MODELS['music_device'] = device
         _MODELS['music_model'].eval()
         return True

@@ -1,6 +1,6 @@
-# GPU
 version: "3.8"
 
+# GPU service (uncomment to use)
 #services:
 #  ai-server:
 #    container_name: ai-server
@@ -9,7 +9,6 @@ version: "3.8"
 #      dockerfile: Dockerfile
 #      args:
 #        USE_GPU: true
-#        BASE_IMAGE: pytorch/pytorch:2.1.0-cuda11.8-cudnn8-runtime
 #    runtime: nvidia
 #    environment:
 #      - NVIDIA_VISIBLE_DEVICES=all
@@ -18,8 +17,7 @@ version: "3.8"
 #    ports:
 #      - "8001:8001"
 
-
-# CPU
+# CPU service
 services:
   ai-server-cpu:
     container_name: ai-server
@@ -28,7 +26,6 @@ services:
       dockerfile: Dockerfile
       args:
         USE_GPU: false
-        BASE_IMAGE: python:3.11-slim
     env_file:
       - .env
     ports:
