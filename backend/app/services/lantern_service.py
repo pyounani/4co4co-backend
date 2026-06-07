@@ -154,7 +154,7 @@ class LanternService:
 
         musics = []
         for music in lantern.get("musics", []):
-            s3_key = music.get("s3_key")
+            s3_key = music.get("s3_path")
             if s3_key:
                 url = await generate_presigned_url(s3_key)
                 if url:

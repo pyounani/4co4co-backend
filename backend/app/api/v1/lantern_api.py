@@ -67,6 +67,8 @@ async def lantern_event_generator(
             break
 
         doc = await repo.find_by_lantern_id(lantern_id)
+        if not doc:
+            break
         statuses = doc.get("music_statuses", [])
 
         for s in statuses:
